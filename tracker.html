@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>PricePulse — Tracker</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+  <style>
+    body{max-width:960px;margin:24px auto}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    #history{height:320px}
+    .muted{color:#666;font-size:0.9rem}
+    .small{font-size:0.9rem}
+  </style>
+</head>
+<body>
+  <h1>PricePulse — Tracker</h1>
+  <p class="muted">Enter a product URL (or an identifier your backend understands), poll an API for the current price, and visualize price history. This is a frontend-only template — wire it to your backend endpoint (default: <code>/api/price?url=</code>).</p>
+
+  <div class="controls">
+    <label style="flex:1">
+      Product URL or ID
+      <input id="productUrl" placeholder="https://example.com/product/123" />
+    </label>
+
+    <label>
+      Interval (seconds)
+      <input id="interval" type="number" min="5" step="5" value="60" style="width:110px" />
+    </label>
+
+    <label>
+      Notify if price drops by (%)
+      <input id="dropPct" type="number" min="0" step="1" value="5" style="width:110px" />
+    </label>
+
+    <div style="display:flex;align-items:flex-end;gap:8px">
+      <button id="start">Start</button>
+      <button id="stop" disabled>Stop</button>
+      <button id="clear">Clear history</button>
+    </div>
+  </div>
+
+  <section style="margin-top:18px">
+    <h2>Current</h2>
+    <p class="small">Last checked: <span id="lastChecked">never</span></p>
+    <p class="small">Current price: <strong id="currentPrice">—</strong></p>
+    <p class="small">Change since first check: <span id="change">—</span></p>
+  </section>
+
+  <section>
+    <h2>History</h2>
+    <canvas id="history" aria-label="price history chart"></canvas>
+  </section>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script>
+    // Configuration: update this if your backend endpoint is different
+    const PRICE_API_BASE = '/api/price?url='; // backend should return JSON: { price: 123.45 }
+
+    const productUrlInput = document.getElementById('productUrl');
+    const intervalInput = document.getElementById('interval');
+    const dropPctInput = document.getElementById('dropPct');
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const clearBtn = document.getElementById('clear');
+    const lastChecked = document.getElementById('lastChecked');
+    const currentPriceEl = document.getElementById('currentPrice');
+    const changeEl = document.getElementById('change');
+
+    const ctx = document.getElementById('history').getContext('2d');
+
+    // Persist history per-product in localStorage
+    function storageKeyForProduct(product) { return 'pricepulse:history:' + product; }
+    function loadHistory(product) {
+      const raw = localStorage.getItem(storageKeyForProduct(product));
+      return raw ? JSON.parse(raw) : [];
+    }
+    function saveHistory(product, history) {
+      localStorage.setItem(storageKeyForProduct(product), JSON.stringify(history));
+    }
+
+    let pollingTimer = null;
+    let chart = null;
+    let currentProduct = null;
+
+    function createChart(labels = [], data = []) {
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [{
+            label: 'Price',
+            data,
+            borderColor: '#1f77b4',
+            backgroundColor: 'rgba(31,119,180,0.08)',
+            tension: 0.2,
+            pointRadius: 3
+          }]
+        },
+        options: {
+          responsive: true,
+          scales: {
+            x: { display: true },
+            y: { display: true, beginAtZero: false }
+          },
+          interaction: { mode: 'index', intersect: false }
+        }
+      });
+    }
+
+    function formatCurrency(v){
+      if (v == null) return '—';
+      return new Intl.NumberFormat(undefined, {
